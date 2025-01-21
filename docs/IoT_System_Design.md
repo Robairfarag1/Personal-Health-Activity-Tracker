@@ -1,5 +1,12 @@
 # IoT System Design
 
+## Diagram
+Below is the IoT System Design Diagram, which illustrates the system's components and data flow:
+
+![IoT System Design Diagram](./IoT_System_Design_Diagram.png)
+
+---
+
 ## 1. Sensors
 The IoT system uses two key sensors embedded in the smartphone to collect activity data:
 
@@ -13,6 +20,7 @@ The IoT system uses two key sensors embedded in the smartphone to collect activi
   - **Limitations:**
     - Sensor noise can affect accuracy.
     - Continuous operation may drain the device's battery.
+    - Requires periodic calibration to maintain accuracy.
 
 - **Gyroscope**:
   - **Type:** Measures angular velocity along the X, Y, and Z axes.
@@ -24,6 +32,7 @@ The IoT system uses two key sensors embedded in the smartphone to collect activi
   - **Limitations:**
     - Noise from small vibrations may cause inaccuracies.
     - Higher power consumption compared to accelerometers.
+    - Requires periodic recalibration.
 
 ---
 
@@ -46,7 +55,7 @@ The smartphone acts as the edge device in this system, performing basic data pre
   - Minimum hardware specifications:
     - 2 GB RAM.
     - Quad-core processor.
-  - Software for real-time computation (e.g., lightweight Python libraries).
+  - Software for real-time computation (e.g., lightweight Python libraries like NumPy and SciPy).
 
 ---
 
@@ -67,6 +76,12 @@ The processed data is transmitted from the smartphone to cloud storage via two n
   - HTTP or MQTT is used to communicate between the smartphone and cloud storage.
   - MQTT is preferred for low-latency real-time updates.
 
+- **Transmission Frequency**:
+  - Processed data is transmitted every 10 seconds to ensure near real-time updates.
+
+- **Security Measures**:
+  - Data is encrypted during transmission using HTTPS to ensure privacy and security.
+
 ---
 
 ## 4. Data Storage and Processing
@@ -75,6 +90,7 @@ The system uses cloud storage and processing services to manage and analyze data
 - **Storage**:
   - **Platform:** AWS S3 or Google Cloud Storage.
   - **Scalability:** Supports distributed storage to handle growing datasets.
+  - **Backup and Redundancy:** Implements automated backups to prevent data loss and ensure reliability.
 
 - **Processing**:
   - **Platform:** Python-based tools such as TensorFlow, Pandas, and NumPy.
@@ -83,10 +99,11 @@ The system uses cloud storage and processing services to manage and analyze data
     - Generate insights, such as predicting sedentary behavior trends.
 
 - **Insights Generated**:
+  - Example: Predict sedentary behavior patterns and send alerts to encourage movement.
   - Classify activities in real time (e.g., walking, sitting).
-  - Provide health recommendations based on activity patterns (e.g., reminders to exercise).
+  - Provide personalized health recommendations based on activity patterns (e.g., reminders to exercise).
 
 ---
 
 ## Summary
-This IoT system integrates multiple components, including sensors, edge devices, networking, and cloud processing, to deliver real-time health insights. The careful design of each element ensures efficiency, scalability, and reliability.
+This IoT system integrates multiple components, including sensors, edge devices, networking, and cloud processing, to deliver real-time health insights. The careful design of each element ensures efficiency, scalability, and reliability. Advanced security measures, periodic backups, and redundancy further enhance the system's robustness and usability.
