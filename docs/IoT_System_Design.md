@@ -3,7 +3,7 @@
 ## Diagram
 Below is the IoT System Design Diagram, which illustrates the system's components and data flow:
 
-![IoT System Design Diagram](./IoT_System_Design_Diagram.png)
+![IoT System Design](docs/IoT_System_Design_Diagram.png)
 
 ---
 
