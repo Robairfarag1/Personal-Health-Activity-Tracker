@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from keras.models import Sequential,load_model
 from keras.layers import Dense, Dropout, LSTM, Activation, TimeDistributed, RepeatVector, Input
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, root_mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
 
 import TimeSeries_LossFunctions as ts_loss_fn
 
@@ -39,16 +39,17 @@ def load_sensor_label_data(root_dir='./Dataset', train_test = 'train', sensor_na
     # load the activity labels
     activity_label = pd.read_csv(f"{data_dir}/y_{train_test}.txt", header =None).to_numpy()
 
-    #
+    # load the subject labels
+    subject_label = pd.read_csv(f"{data_dir}/subject_{train_test}.txt", header =None).to_numpy()
 
-    return sensor_xyz, activity_label
+    return sensor_xyz, activity_label, subject_label
 
 # time-series modelling for XYZ sensor data
-def create_and_fit_XYZ_predictor(
-    X_train_normalized, y_train_normalized, 
-    model_idx = 0,
+def ts_forecaster_model1(
+    X_train, y_train, # has to be min-max scaled
     sensor_name = 'body_acc',
     user_loss_fn = 'mse',
+    
     
     epochs = 30,
     batch_size = 500,
@@ -56,10 +57,10 @@ def create_and_fit_XYZ_predictor(
 
 ):
     # Derive variables
-    seq_length = X_train_normalized.shape[1]
-    nb_features_in = X_train_normalized.shape[2]
-    nb_features_out = y_train_normalized.shape[2]
-    model_path = f'TimeSeries_MODEL({model_idx})_SENSOR({sensor_name})_LOSS_FN({user_loss_fn}).keras'
+    seq_length = X_train.shape[1]
+    nb_features_in = X_train.shape[2]
+    nb_features_out = y_train.shape[2]
+    model_path = f'TimeSeriesPredictor_SENSOR({sensor_name})_LOSS_FN({user_loss_fn}).keras'
 
 
     # Define the model
@@ -92,13 +93,16 @@ def create_and_fit_XYZ_predictor(
         print("ERROR: Invalid user loss function")
 
     # fit the network
-    history = model.fit(X_train_normalized, y_train_normalized, epochs=epochs, batch_size=batch_size, validation_split=validation_split, verbose=0,
-          callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='min'),
-                       keras.callbacks.ModelCheckpoint(model_path,monitor='val_loss', save_best_only=True, mode='min', verbose=0)]
+    history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_split=validation_split, verbose=1,
+          #callbacks = [keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='min'),
+          #             keras.callbacks.ModelCheckpoint(model_path,monitor='val_loss', save_best_only=True, mode='min', verbose=0)]
           )
 
     # list all data in history
     print(history.history.keys())
+
+    
+
 
     # Return values
     return model, history, model_path
@@ -107,7 +111,7 @@ def create_and_fit_XYZ_predictor(
 def evaluate_XYZ_predictor(
         model, # trained model
         test_sensor_XYZ,
-        sensor_scaler, #MinMaxScaler fitted on Train data
+        sensor_scalers, #per-axis MinMaxScaler fitted on Train data
         debug_mode = True
         ):
 
@@ -120,22 +124,43 @@ def evaluate_XYZ_predictor(
         #print(f"y_test shape: {y_test.shape}")
 
         # Step 3: scale according to train scaler
-        X_test_normalized = sensor_scaler.transform(X_test.reshape(-1, 3)).reshape(len(X_test), X_test.shape[1], X_test.shape[2])
-        y_test_normalized = sensor_scaler.transform(y_test.reshape(-1, 3)).reshape(len(y_test), y_test.shape[1], y_test.shape[2])
+
+        X_test_scaled = np.zeros_like(X_test)
+        y_test_scaled = np.zeros_like(y_test)
+
+
+        for axis in range(test_sensor_XYZ.shape[2]):
+            #test_XYZ_scaled[:, :, axis] = sensor_scalers[axis].transform(test_sensor_XYZ[:, :, axis].flatten()).reshape(test_sensor_XYZ.shape[0], test_sensor_XYZ.shape[1])
+            X_test_scaled[:,:,axis] = sensor_scalers[axis].transform(X_test[:, :, axis].reshape(-1, 1)).reshape(X_test[:,:,axis].shape)
+            y_test_scaled[:,:,axis] = sensor_scalers[axis].transform(y_test[:, :, axis].reshape(-1, 1)).reshape(y_test[:,:,axis].shape)
+
+        
+        #X_test_scaled = sensor_scaler.transform(X_test.reshape(-1, 3)).reshape(X_test.shape)
+        #y_test_scaled = sensor_scaler.transform(y_test.reshape(-1, 3)).reshape(y_test.shape)
 
         # Step 3. Calculate MSE/RMSE/MAE normalized
-        scores_test = model.evaluate(X_test_normalized, y_test_normalized, verbose=2)
-        mse_norm = scores_test[0]
-        mae_norm = scores_test[1]
-        print("Metrics on Scaled Test Data:")
+        scores_test = model.evaluate(X_test_scaled, y_test_scaled, verbose=2)
+        mse_scaled = scores_test[0]
+        mae_scaled = scores_test[1]
+        if(debug_mode):
+            print("Metrics on Scaled Test Data:")
+            
+            print(f"    MSE (scaled): {mse_scaled:.4f}")
+            print(f"    RMSE (scaled): {np.sqrt(mse_scaled):.4f}")
+            print(f"    MAE (scaled): {mae_scaled:.4f}")
         
-        print(f"    MSE: {mse_norm:.4f}")
-        print(f"    RMSE: {np.sqrt(mse_norm):.4f}")
-        print(f"    MAE: {mae_norm:.4f}")
-        
-        # Step 4. Calculate MSE/RMSE/MAE on unscaled data
-        y_pred_normalized = model.predict(X_test_normalized).astype('float32')
-        y_pred = sensor_scaler.inverse_transform(y_pred_normalized.reshape(-1, 3)).reshape(len(y_test), y_test.shape[1], y_test.shape[2])
+        # Step 4. Calculate MSE/RMSE/MAE on UNSCALED data
+        y_pred_scaled = model.predict(X_test_scaled).astype('float32')
+        print(f"PRED SHAPE: {y_pred_scaled.shape}")
+
+        y_pred = np.zeros_like(y_pred_scaled)
+
+        for axis in range(test_sensor_XYZ.shape[2]):
+            #test_XYZ_scaled[:, :, axis] = sensor_scalers[axis].transform(test_sensor_XYZ[:, :, axis].flatten()).reshape(test_sensor_XYZ.shape[0], test_sensor_XYZ.shape[1])
+            y_pred[:,:,axis] = sensor_scalers[axis].inverse_transform(y_pred_scaled[:, :, axis].reshape(-1, 1)).reshape(y_pred_scaled[:,:,axis].shape)
+
+
+        #y_pred = sensor_scaler.inverse_transform(y_pred_scaled.reshape(-1, 3)).reshape(y_test.shape)
         y_true = y_test
 
         # Step 5. Calculate MSE/RMSE/MAE for unscaled data for Interpretability
@@ -144,26 +169,34 @@ def evaluate_XYZ_predictor(
 
         # Calculate key metric per axis (x, y, z)
         for axis_index, axis_name in enumerate(['x-axis', 'y-axis', 'z-axis']):
-                y_true_axis = y_true[:, :, axis_index].flatten()
-                y_pred_axis = y_pred[:, :, axis_index].flatten()
-                
-                mse_axis = mean_squared_error(y_true_axis, y_pred_axis)
-                mae_axis = mean_absolute_error(y_true_axis, y_pred_axis)
+                y_true_axis = y_true[:, :, axis_index].reshape(y_true.shape[0], y_true.shape[1], 1)
+                y_pred_axis = y_pred[:, :, axis_index].reshape(y_pred.shape[0], y_pred.shape[1], 1)
+                y_true_axis_flat = y_true_axis.flatten()
+                y_pred_axis_flat = y_pred_axis.flatten()
+
+                mse_axis = mean_squared_error(y_true_axis_flat, y_pred_axis_flat)
+                rmse_axis = root_mean_squared_error(y_true_axis_flat, y_pred_axis_flat)
+                mae_axis = mean_absolute_error(y_true_axis_flat, y_pred_axis_flat)
+                #mase_axis = ts_loss_fn.mase_loss_multi_step(y_true_axis, y_pred_axis).numpy()
+                tmse_axis = ts_loss_fn.trace_mse_loss(y_true_axis, y_pred_axis).numpy()
                 
                 metrics[axis_name] = {'MSE': mse_axis, 
-                                      'RMSE': np.sqrt(mse_axis), 
+                                      'RMSE': rmse_axis, 
                                       'MAE': mae_axis,
-                                      'MASE': -1.0,
-                                      'TMSE': -1.0}
+                                      #'MASE': mase_axis,
+                                      'TraceMSE': tmse_axis}
 
         # Calculate MSE and MAE across all axes combined
         mse_combined = mean_squared_error(y_true.flatten(), y_pred.flatten())
+        rmse_combined = root_mean_squared_error(y_true.flatten(), y_pred.flatten())
         mae_combined = mean_absolute_error(y_true.flatten(), y_pred.flatten())
-        mase_combined = ts_loss_fn.mase_loss_multi_step(y_true, y_pred).numpy()
+        #mase_combined = ts_loss_fn.mase_loss_multi_step(y_true, y_pred).numpy()
         tmse_combined = ts_loss_fn.trace_mse_loss(y_true, y_pred).numpy()
-        metrics['xyz-Combined'] = {'MSE': mse_combined, 'RMSE': np.sqrt(mse_combined),'MAE': mae_combined,
-                                   'MASE': mase_combined,
-                                   'TMSE': tmse_combined}
+        metrics['xyz-Combined'] = {'MSE': mse_combined, 
+                                   'RMSE': rmse_combined,
+                                   'MAE': mae_combined,
+                                   #'MASE': mase_combined,
+                                   'TraceMSE': tmse_combined}
 
         # Print metrics if debug mode is True
         if(debug_mode):
@@ -173,14 +206,15 @@ def evaluate_XYZ_predictor(
                     print(f"    MSE: {metrics[axis_name]['MSE']:.4f}")
                     print(f"    RMSE: {metrics[axis_name]['RMSE']:.4f}")
                     print(f"    MAE: {metrics[axis_name]['MAE']:.4f}")
-                    print(f"    MASE: {metrics[axis_name]['MASE']:.4f}")
-                    print(f"    TMSE: {metrics[axis_name]['TMSE']:.4f}")
-        return metrics
+                    #print(f"    MASE: {metrics[axis_name]['MASE']:.4f}")
+                    print(f"    'TraceMSE': {metrics[axis_name]['TraceMSE']:.4f}")
+        
+        return metrics, y_pred, y_true, X_test
     
 def time_series_predictor_pipeline(
         root_dir = './Dataset',
         sensor_name = 'body_acc',
-        model_idx = 0,
+        model_name = "ts_model_default",
         user_loss_fn = 'mse',
         num_epochs = 10,
         batch_size = 500,
@@ -188,31 +222,53 @@ def time_series_predictor_pipeline(
         debug_mode = True,
 
 ):
-    print(f"TimeSeriesPredictor for SENSOR: {sensor_name} LOSS: {user_loss_fn}")
+    print(f"TimeSeriesPredictor for SENSOR: {sensor_name} and MODEL: {model_name}")
 
-    # Step 1: Load TRAIN XYZ data for specified sensor_name
-    # print(f"STEP 1: Load train xyz data for SENSOR ({sensor_name})")
-    train_sensor_XYZ, train_label = load_sensor_label_data(root_dir=root_dir, train_test = 'train', sensor_name=sensor_name)
+    # Step 1: Load TRAIN/TEST XYZ data for specified sensor_name
+    print(f"TS_STEP 1: Load train xyz data for SENSOR ({sensor_name})")
+    train_sensor_XYZ, train_label, train_person = load_sensor_label_data(root_dir=root_dir, train_test = 'train', sensor_name=sensor_name)
+    test_sensor_XYZ, test_label, test_person = load_sensor_label_data(root_dir=root_dir, train_test = 'test', sensor_name=sensor_name)
 
     # Step 2: Scale training data per 3D axis
-    # print(f"STEP 2: scale train xyz data per x,y,z axis using MinMaxScaler")
+    print(f"TS_STEP 2: scale train xyz data per x,y,z axis using MinMaxScaler")
     # initialize MinMaxScaler to range [0, 1]
-    sensor_scaler = MinMaxScaler(feature_range=(0, 1))
+    #sensor_scaler = MinMaxScaler(feature_range=(0, 1))
     # normalize: first flatten the data per axis, then scale, then reshape to original 
-    train_XYZ_normalized = sensor_scaler.fit_transform(train_sensor_XYZ.reshape(-1, 3)).reshape(len(train_sensor_XYZ), train_sensor_XYZ.shape[1], train_sensor_XYZ.shape[2])
+    #train_XYZ_scaled = sensor_scaler.fit_transform(train_sensor_XYZ.reshape(-1, 3)).reshape(train_sensor_XYZ.shape)
+    #test_XYZ_scaled = sensor_scaler.transform(test_sensor_XYZ.reshape(-1, 3)).reshape(test_sensor_XYZ.shape)
+
+    # Create a list to store scalers for each axis
+    sensor_scalers = []
+
+    # Initialize and fit a MinMaxScaler for each axis
+    for axis in range(train_sensor_XYZ.shape[2]):
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        #scaler.fit(X[:, :, axis].reshape(-1, 1))
+        scaler.fit(train_sensor_XYZ[:, :, axis].reshape(-1, 1))
+        sensor_scalers.append(scaler)
+
+    # Apply the scalers to each axis
+    train_XYZ_scaled = np.zeros_like(train_sensor_XYZ)
+    
+    
+    for axis in range(train_sensor_XYZ.shape[2]):
+        train_XYZ_scaled[:, :, axis] = sensor_scalers[axis].transform(train_sensor_XYZ[:, :, axis].reshape(-1, 1)).reshape(train_sensor_XYZ.shape[0], train_sensor_XYZ.shape[1])
+        #test_XYZ_scaled[:, :, axis] = sensor_scalers[axis].transform(test_sensor_XYZ[:, :, axis].reshape(-1, 1)).reshape(test_sensor_XYZ.shape[0], test_sensor_XYZ.shape[1])
 
     # Step 3: split normalized XYZ data into two, on the time-axis (axis=1):
-    # print(f"STEP 3: split scaled train xyz data into two along the time-axis (axis=1)")
+    print(f"TS_STEP 3: split scaled train xyz data into two along the time-axis (axis=1)")
     #    (1) first 64 time samples : the most recent sensor readings, and 
     #    (2) last 64 samples : future sensor samples
-    X_train_normalized = train_XYZ_normalized[:, :64, :]  # First 64 time-series samples
-    y_train_normalized = train_XYZ_normalized[:, 64:, :]  # Last 64 time-series samples
+    X_train_scaled = train_XYZ_scaled[:, :64, :]  # First 64 time-series samples
+    y_train_scaled = train_XYZ_scaled[:, -64:, :]  # Last 64 time-series samples
+    #X_test_scaled = test_XYZ_scaled[:, :64, :]  # First 64 time-series samples
+    #y_test_scaled = test_XYZ_scaled[:, -64:, :]  # Last 64 time-series samples
+    
     
     # Step 4: Create TimeSeriesPredictor Model, and train
-    # print(f"STEP 4: Create, train, and save a TimeSeriesPredictor")
-    model, history, model_path = create_and_fit_XYZ_predictor(
-        X_train_normalized, y_train_normalized, 
-        model_idx = model_idx,
+    print(f"TS_STEP 4: Create, train, and save a TimeSeriesPredictor")
+    model, history, model_path = ts_forecaster_model1(
+        X_train_scaled, y_train_scaled, 
         sensor_name = sensor_name,
         user_loss_fn = user_loss_fn,
         epochs = num_epochs,
@@ -220,7 +276,7 @@ def time_series_predictor_pipeline(
         validation_split = val_split)
     
     # Step 5: Display Loss Curve(s)
-    # print(f"STEP 5: Display loss curves")
+    print(f"TS_STEP 5: Display loss curves")
     #fig_acc = plt.figure(figsize=(6, 6))
     #plt.plot(history.history['loss'])
     #plt.plot(history.history['val_loss'])
@@ -228,21 +284,45 @@ def time_series_predictor_pipeline(
     #plt.ylabel('loss')
     #plt.xlabel('epoch')
     #plt.legend(['train', 'val'], loc='upper left')
+    
+    # display learning curves and save
+    # Save the Model
+    model_name = f"TimeSeries Forecaster for Sensor ({sensor_name})"
+    tshf_display_learning_curves(history, label=model_name)
 
-    #plt.show()
-    #fig_acc.savefig(f"TimeSeriesPredictor Loss ({user_loss_fn})  ({sensor_name}).png")
-
-    # Step 6: Load TEST XYZ data for model evaluation
-    #print(f"STEP 6: Load test xyz data for SENSOR ({sensor_name})")
-    test_sensor_XYZ, test_label = load_sensor_label_data(root_dir=root_dir, train_test = 'test', sensor_name=sensor_name)
+#    Step 6: Load TEST XYZ data for model evaluation
+    print(f"TS_STEP 6: Load test xyz data for SENSOR {sensor_name}")
+    
 
     # Step 7: Evaluate 
-    #print(f"STEP 7: Evaluate model on test data")
-    metrics_on_test = evaluate_XYZ_predictor(
+    print(f"TS_STEP 7: Evaluate model on test data")
+    metrics_on_test, y_pred, y_true, X_test = evaluate_XYZ_predictor(
         model, # trained model
         test_sensor_XYZ,
-        sensor_scaler, #MinMaxScaler fitted on Train data
+        sensor_scalers, #MinMaxScaler fitted on Train data
         debug_mode=debug_mode
         )
 
-    return model, model_path, history, sensor_scaler, metrics_on_test
+
+    
+    #plt.show()
+    #fig_acc.savefig(f"TimeSeriesPredictor Loss ({user_loss_fn})  ({sensor_name}).png")
+
+    return model, history, sensor_scalers, metrics_on_test
+
+
+def tshf_display_learning_curves(history, label="Default"):
+
+    # Plot Training Performance
+    fig_acc = plt.figure(figsize=(10, 5))
+    plt.plot(history.history["loss"], label="Training")
+    plt.plot(history.history["val_loss"], label="Validation",color="orange", linestyle='dashed')
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.title(f"Loss Curves: {label}")
+    plt.legend()
+    plt.show()
+
+    fig_acc.savefig(f"{label}.png")
+
+
